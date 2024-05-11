@@ -1,0 +1,305 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jan 10 15:43:21 2024
+
+@author: IFE12691 Erlend Kringlebotten
+"""
+
+def read_spectroradiometer_data(file_path,APE=False,irradiation_threshold=25):
+    ### INPUTS:
+    ##innstråling: boolean: if True, APE is calculated
+    ## tidsintervall: liste med start og slutt tidspunkt
+    ##APE: boolean, om True vil den returnere en dataframe med innstråling og APE
+    
+    ## Irradiation_threshold: verdier for innstråling som APE-er beregnes for
+    #
+    #RETURNS:
+    # Om innstråling = false, returneres bare en dataframe "uten_repetetive_bølgelengder" som gir tidspunkt og måling per bølgelengde
+        # om innstråling = True vil også en dataframe "innstråling og APE" returneres som har innstråling [W/m2] og APE for hvert minutt i default
+        # og andre intervall om oppløsning_APE endres..
+    
+    
+    #OBS! Her vil innstrålingsgrensen på 25 i default være for hele spekteret som spektroradiometeret ser
+    import pandas as pd 
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from scipy.integrate import trapz
+    from datetime import datetime, timedelta
+    import copy
+
+
+        
+    h=6.62607015*10**-34 #J*s Planck
+    c=299792458 #m/s Speed of light
+    q=1.602176634*10**-19 #C Electrons charge
+    
+    #PRØVER Å HENTE DATOEN:
+    with open(file_path, 'r') as file:
+        first_three_lines = file.readlines()[:3]
+    first_line = first_three_lines[0]
+    
+    split_line = first_line.split(',')
+
+    # Extract the date part (assuming it's always the second element after splitting)
+    date_part = split_line[1]
+
+    # Remove leading and trailing whitespace and newline characters
+    date_str = date_part.strip()
+    
+    # Parse the date string using the appropriate format
+    parsed_date = datetime.strptime(date_str, '%m/%d/%Y')
+
+    # Format the date as YYYY-M-D
+    formatted_date = parsed_date.strftime('%Y-%m-%d')
+    
+    from datetime import datetime, timedelta
+    import pandas as pd
+    
+    # Extracting the timestamps from the third line
+    third_line = first_three_lines[2]
+    split_line = third_line.split(',')
+    split_line_1 = [value for value in split_line if value.strip() != ''] #Removing all elements with just an empty string, which is every other element
+
+   
+    timestamps = [timestamp.strip() for timestamp in split_line_1[0:]]  #Making a timestamps list
+    
+    
+    
+    # Convert timestamps to datetime objects and add one hour
+    datetime_objects = []
+ 
+    for timestamp in timestamps:
+        try:
+            # Try to convert the timestamp to datetime
+            dt_object = datetime.strptime(f"{formatted_date} {timestamp}", "%Y-%m-%d %H:%M:%S") #+ timedelta(hours=1) #Making them into timestamp, the onehour offset is no longer present
+            
+            # If the year is 2023 or 2024 and the month is November, December or January, add 6 minutes due to a timedrift in the measurements
+            if dt_object.year in [2023, 2024] and dt_object.month in [11, 12, 1]:
+                dt_object = dt_object + timedelta(minutes=6)
+            # If the year is 2024 and the month is February or the day is up to 5th March, add 7 minutes
+            elif dt_object.year == 2024 and (dt_object.month == 2 or (dt_object.month == 3 and dt_object.day <= 5)):
+                dt_object = dt_object + timedelta(minutes=7)
+        
+            datetime_objects.append(dt_object) #The time is in UTC!
+            
+        except ValueError:
+            # Handle the case where the timestamp is an empty string
+            print(f"Warning: Empty timestamp found. Timestamp will be set to 'NaT'.")
+            datetime_objects.append(pd.NaT)
+    
+    # Check for missing minutes and print warnings
+    for i in range(1, len(datetime_objects)):
+        if pd.notna(datetime_objects[i - 1]) and pd.notna(datetime_objects[i]):
+            time_difference = datetime_objects[i] - datetime_objects[i - 1]
+            if time_difference != timedelta(minutes=1):
+                # Print a warning for missing minutes¨
+                #Just print if it is not november
+                if datetime_objects[i].month != 11:
+                    print(f"Warning: Missing minutes between {datetime_objects[i - 1]} and {datetime_objects[i]}. It could also be due to another timeinterval than 1 minute")
+    
+    # Create the DataFrame
+    data = pd.read_csv(file_path, skiprows=[0, 1, 2])
+    
+    columns_to_keep = [0, 1] + list(range(3, len(data.columns), 2)) #I am skipping every other column, because the wavelength index is just repeating itself
+    uten_repetitive_bølgelengder = data.iloc[:, columns_to_keep].copy()
+    
+    # Set the DatetimeIndex as the index of the DataFrame
+    uten_repetitive_bølgelengder.set_index('Wavelength', inplace=True)
+    
+    # Create a DatetimeIndex with the adjusted timestamps
+    date_range = pd.DatetimeIndex(datetime_objects, name='Timestamps')
+    
+    # Assign the formatted DatetimeIndex to the DataFrame
+    uten_repetitive_bølgelengder.columns = date_range
+    
+
+       
+    if APE: #If you want to include also the APE-calculations
+        APE_dataframe = copy.deepcopy(uten_repetitive_bølgelengder)
+        rows_to_drop = (APE_dataframe.index < 350) | (APE_dataframe.index > 1050)
+        APE_dataframe.drop(APE_dataframe[rows_to_drop].index, inplace=True)
+        columns = ['Timestamp', 'Irradiation entire specter [W/m^2]', 'APE (350-1050 nm) [eV]']
+    
+        innstråling_og_APE = pd.DataFrame(columns=columns)   #Making a dataframe where the APEs and the irradiation is to be stored           
+        for tidspunkt in datetime_objects:
+            
+            beregnet_innstråling_hele_området= trapz(uten_repetitive_bølgelengder[tidspunkt], x=uten_repetitive_bølgelengder.index)/1000 #From W/m2/um to W/m2/nm
+            
+            beregnet_innstråling_350_1050= trapz(APE_dataframe[tidspunkt], x=APE_dataframe.index)/1000 #Fra W/m2/um til W/m2/nm
+    
+            fluks_integrasjon_0=APE_dataframe[tidspunkt]*APE_dataframe.index
+            fluks_integrasjon=fluks_integrasjon_0/(1000*h*c) #Converts to W/m2/nm and uses formula from Paudyal et al (2024), s. 12
+            total_fluks_tetthet = trapz(fluks_integrasjon,x=APE_dataframe.index)*10**-9 #See "Nofuentes et al 2017 s.2"
+    
+            APE_value = beregnet_innstråling_350_1050/(q*total_fluks_tetthet) 
+            
+                
+            if beregnet_innstråling_hele_området >=irradiation_threshold: #filtrating as done by Paudyal et al
+                row_data = {'Timestamp': tidspunkt, 'Irradiation entire specter [W/m^2]': beregnet_innstråling_hele_området}
+              
+                row_data['APE (350-1050 nm) [eV]'] = APE_value
+               
+
+               # Concatenate the new row to the DataFrame
+                innstråling_og_APE = pd.concat([innstråling_og_APE, pd.DataFrame([row_data])], ignore_index=True)   
+                
+                
+                    
+        
+        if   uten_repetitive_bølgelengder.isna().any().any() or innstråling_og_APE.isna().any().any():
+            na_locations = {
+                "uten_repetitive_bølgelengder": uten_repetitive_bølgelengder.columns[uten_repetitive_bølgelengder.isna().any()],
+                "innstråling_og_APE": innstråling_og_APE.columns[innstråling_og_APE.isna().any()]
+            }
+            raise ValueError(f"NA values found in the resulting DataFrames at columns: {na_locations}")
+            
+        return uten_repetitive_bølgelengder,innstråling_og_APE
+    if  uten_repetitive_bølgelengder.isna().any().any():
+        na_locations = uten_repetitive_bølgelengder.columns[uten_repetitive_bølgelengder.isna().any()]
+        raise ValueError(f"NA values found in the resulting DataFrame at columns: {na_locations}")
+    return uten_repetitive_bølgelengder
+
+
+def collect_data_from_directory(directory_path,APE=False):
+    APEs=[]
+    generell_data=[]
+    # Iterate over files in the directory
+    ## Returns a dataframe with all the measurements and if APE=True also an extra dataframe with the APE values and irradiance (measured by the spectroradiometer)
+    import os
+    import pandas as pd
+    for filename in os.listdir(directory_path):
+        if filename.endswith(".csv"):  # Only process CSV files
+
+            if os.path.isfile(os.path.join(directory_path, filename)):
+                file_path=directory_path + "/" + filename
+                if not APE:
+                    data = read_spectroradiometer_data(file_path,APE)
+                else:
+                    data,APE_value = read_spectroradiometer_data(file_path,APE)
+                    APEs.append(APE_value)
+                generell_data.append(data)
+    hele_mappen_data = pd.concat(generell_data,axis=1) 
+    if APE:
+        hele_mappen_APE = pd.concat(APEs,ignore_index=True)
+        return hele_mappen_data,hele_mappen_APE 
+    return hele_mappen_data
+
+def plotting_av_spektroradiometer_data(data, dato, klokkeslett,inkludere_innstråling=False,legend_loc="upper left",legend=True,usikkerhet=False,set_legend=False):
+    #data: dataframe with wavelenghts and every timestamp 
+    # dato: list with str, date format YYYY-MM-DD
+    # klokkeslett: list with str, klokkeslett format: HH:MM:SS
+    #inkludere_innstråling: If True the irradiance is calculated based on the 300-1100 nm range, and printed in the plot.
+    #usikkerhet: If True, the uncertainity is included with a shaded area. 
+    import matplotlib.pyplot as plt
+    from scipy.integrate import trapz
+    import pandas as pd
+    if usikkerhet:
+        uncertainties = [{'range': (300, 310), 'value': 0.203},   # 20.3%
+                         {'range': (310, 350), 'value': 0.085},   # 8.5%
+                         {'range': (350, 450), 'value': 0.047},   # 4.7%
+                         {'range': (450, 1050), 'value': 0.04},  # 4.0%
+                         {'range': (1050, 1150), 'value': 0.032}  # 3.2%
+                         ]
+
+        # Add uncertainties based on wavelength range
+       
+    
+    for dag in dato:
+        for tidspunkt in klokkeslett:
+            plotte_tid = dag + " " + tidspunkt
+            if inkludere_innstråling:
+                beregnet_innstråling= trapz(data[plotte_tid], x=data.index)/1000
+                if usikkerhet:
+                    df=pd.DataFrame(data[plotte_tid])
+                    df["wavelength"]=df.index
+                    df['uncertainty'] = 0.0  # default uncertainty
+                    for uncertainty_range in uncertainties:
+                        mask = (df['wavelength'] >= uncertainty_range['range'][0]) & (df['wavelength'] < uncertainty_range['range'][1])
+                        df.loc[mask, 'uncertainty'] = uncertainty_range['value']
+
+                    plt.plot(df["wavelength"],df.iloc[:,0],label = f"{plotte_tid} Irr: {beregnet_innstråling:.2f} W/m$^2$")
+                    # Add shaded uncertainty region
+                    plt.fill_between(df['wavelength'], df.iloc[:, 0] - df['uncertainty']*df.iloc[:,0], df.iloc[:, 0] + df['uncertainty']*df.iloc[:,0],
+                                     color='gray', alpha=0.5)
+                else:
+                    plt.plot(data.index,data[plotte_tid],label = f"{plotte_tid} Irr: {beregnet_innstråling:.2f} W/m$^2$")
+                   
+            else:
+                if usikkerhet:
+                    df=pd.DataFrame(data[plotte_tid])
+                    df["wavelength"]=df.index
+                    df['uncertainty'] = 0.0  # default uncertainty
+                    for uncertainty_range in uncertainties:
+                        mask = (df['wavelength'] >= uncertainty_range['range'][0]) & (df['wavelength'] < uncertainty_range['range'][1])
+                        df.loc[mask, 'uncertainty'] = uncertainty_range['value']
+                    if set_legend:
+                        label_legend = set_legend
+                    else:
+                        label_legend = plotte_tid
+                    plt.plot(df["wavelength"],df.iloc[:,0],label = label_legend)
+                    # Add shaded uncertainty region
+                    plt.fill_between(df['wavelength'], df.iloc[:, 0] - df['uncertainty']*df.iloc[:,0], df.iloc[:, 0] + df['uncertainty']*df.iloc[:,0],
+                                     color='gray', alpha=0.5)
+                    
+                else:
+                    plt.plot(data.index,data[plotte_tid],label = plotte_tid)
+                    
+    if legend:
+        if set_legend:
+            plt.legend(set_legend)
+        else:
+            plt.legend(loc=legend_loc)
+    plt.ylabel(r'Spectral Irradiance [W/m$^2\cdot\mu$m]')
+    plt.xlabel("Wavelength [nm]")
+    plt.title(f"Spectroradiometer data from {dato}")
+    plt.grid(True)
+    plt.tight_layout()
+    
+def beregne_innstråling(dataframe,dato,klokkeslett):
+    # dataframe: dataframe med info
+    #dato liste med str
+    # klokkeslett liste med str
+    from scipy.integrate import trapz
+    import pandas as pd
+    innstråling_df = pd.DataFrame(columns=["Date and time","Irradiation [W/m2]"])    
+    rows_to_concat = []
+          
+    for dag in dato:
+        for tidspunkt in klokkeslett:
+            beregne_tid = dag + " " + tidspunkt
+            
+            beregnet_innstråling= trapz(dataframe[beregne_tid], x=dataframe.index)/1000 #Fra W/m2/um til W/m2/nm
+            rows_to_concat.append({"Date and time": beregne_tid, "Irradiation [W/m2]": beregnet_innstråling})
+
+            #innstråling_df = innstråling_df.append({"Date and time":beregne_tid,"Irradiation [W/m2]":beregnet_innstråling},ignore_index=True)
+    innstråling_df = pd.concat([innstråling_df, pd.DataFrame(rows_to_concat)], ignore_index=True)
+
+            
+    return innstråling_df
+
+def snitt_av_spektroradiometer(input_df, start_time, end_time):
+    # Convert start and end times to datetime objects
+    #inputs:
+        #Input_df: dataframe 
+        # start_time : str på formen YYYY-MM-DD HH:MM:SS
+        # end_time: str samme form som start_time
+        
+        #Returns: result_df: dataframe med snittverdier for disse minuttene med bølgelengdene som index
+    import pandas as pd
+    start_datetime = pd.to_datetime(start_time)
+    end_datetime = pd.to_datetime(end_time)
+
+    # Extract columns within the specified time range
+    selected_columns = [col for col in input_df.columns if start_datetime <= pd.to_datetime(col) <= end_datetime]
+
+    # Check if any columns are found within the time range
+    if not selected_columns:
+        raise ValueError(f"No columns found within the specified time range.")
+
+    # Compute the mean across selected columns
+    mean_values = input_df[selected_columns].mean(axis=1)
+
+    # Create a new DataFrame with the means and the same index
+    result_df = pd.DataFrame({f'Mean from {start_time} to {end_time}': mean_values}, index=input_df.index)
+
+    return result_df
