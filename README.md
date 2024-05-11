@@ -1,4 +1,4 @@
-# Handling spectroradiometer data.py
+# Handling data from spectroradiometer.py
 
 This Python script contains five functions. The first function is 
 # `read_spectroradiometer_data` 
