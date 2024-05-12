@@ -85,6 +85,9 @@ df = collect_data_from_directory('path_to_your_directory', APE=True)
 ```
 
 This will return two DataFrames. The first DataFrame contains all the spectral irradiance measurements from all CSV files in the directory. The second DataFrame contains the calculated APE values and irradiance for each file.
+## Note
+
+The function only processes CSV files in the directory. It checks if a file is a CSV file and if it exists before processing it.
 
 The third function is:
 # plotting_av_spektroradiometer_data
@@ -132,9 +135,7 @@ This will plot the spectral irradiance data from the DataFrame `df` for the date
 
 The function calculates irradiance using the trapezoidal rule for numerical integration. The uncertainty is calculated based on predefined wavelength ranges and their corresponding uncertainty values.
 
-## Note
 
-The function only processes CSV files in the directory. It checks if a file is a CSV file and if it exists before processing it.
 
 The fourth function is: 
 # beregne_innstråling
